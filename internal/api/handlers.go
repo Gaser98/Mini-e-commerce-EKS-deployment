@@ -24,8 +24,8 @@ func RegisterRoutes(r *gin.Engine, q *db.Queries) {
 			Password string `json:"password"`
 		}
 
-		if err := c.BindJSON(&req); err != nil {
-			c.Status(http.StatusBadRequest)
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 
@@ -34,10 +34,6 @@ func RegisterRoutes(r *gin.Engine, q *db.Queries) {
 			c.Status(http.StatusUnauthorized)
 			return
 		}
-		
-		/*debug logs were hashed after finishing the debuging 
-		fmt.Println("DEBUG DB HASH:", user.PasswordHash)
-		fmt.Println("DEBUG INPUT PASSWORD:", req.Password)*/
 
 		if err := bcrypt.CompareHashAndPassword(
 			[]byte(user.PasswordHash),
@@ -69,8 +65,9 @@ func RegisterRoutes(r *gin.Engine, q *db.Queries) {
 
 	// ---------- CURRENT USER ----------
 	auth.GET("/users/me", func(c *gin.Context) {
+		uid, _ := c.Get("user_id")
 		c.JSON(http.StatusOK, gin.H{
-			"user_id": c.GetInt("user_id"),
+			"user_id": uid,
 		})
 	})
 
@@ -110,13 +107,14 @@ func RegisterRoutes(r *gin.Engine, q *db.Queries) {
 			Total float64 `json:"total"`
 		}
 
-		if err := c.BindJSON(&req); err != nil {
-			c.Status(http.StatusBadRequest)
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 
+		uid, _ := c.Get("user_id")
 		order, err := q.CreateOrder(c, db.CreateOrderParams{
-			UserID: int32(c.GetInt("user_id")),
+			UserID: uid.(int32),
 			Total: sql.NullString{
 				String: fmt.Sprintf("%.2f", req.Total),
 				Valid:  true,
@@ -132,7 +130,8 @@ func RegisterRoutes(r *gin.Engine, q *db.Queries) {
 
 	// ---------- LIST ORDERS ----------
 	auth.GET("/orders", func(c *gin.Context) {
-		orders, err := q.ListOrdersByUser(c, int32(c.GetInt("user_id")))
+		uid, _ := c.Get("user_id")
+		orders, err := q.ListOrdersByUser(c, uid.(int32))
 		if err != nil {
 			c.Status(http.StatusInternalServerError)
 			return

@@ -21,7 +21,31 @@ func main() {
 	queries := db.New(dbConn)
 	router := gin.Default()
 
+	// CORS middleware
+	router.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
+
 	api.RegisterRoutes(router, queries)
+
+	// No-cache middleware for static assets
+	router.Use(func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		c.Next()
+	})
+	router.Static("/static", "./frontend")
+	router.GET("/", func(c *gin.Context) {
+		c.File("./frontend/index.html")
+	})
 
 	router.Run(":8080")
 }
