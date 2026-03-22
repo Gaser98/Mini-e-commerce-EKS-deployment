@@ -17,6 +17,18 @@ spec:
           image: 776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api:latest
           ports:
             - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
           env:
             - name: DATABASE_URL
               valueFrom:
