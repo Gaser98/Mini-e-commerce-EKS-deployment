@@ -4,9 +4,6 @@ terraform.tfstate
 terraform.tfstate.backup
 *.tfvars
 
-# Go
-genhash.go
-
 # IDE
 .vscode/
 .idea/
