@@ -144,8 +144,6 @@ module "eks" {
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
-
-  # 🔑 THIS IS THE ONLY ACCESS FLAG YOU NEED
   enable_cluster_creator_admin_permissions = true
 
   cluster_endpoint_public_access        = true  /*or false and use a bastion host*/
