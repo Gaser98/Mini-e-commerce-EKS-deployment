@@ -1,0 +1,37 @@
+name: Cleanup — Destroy ephemeral namespace
+
+# Fires when a PR is merged OR closed without merging.
+# Deleting a namespace cascades — removes Deployments, Services, Pods,
+# ConfigMaps, and ExternalSecrets (+ the K8s Secrets ESO created).
+# The staging and production namespaces are never touched.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    name: Delete pr-${{ github.event.number }} namespace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/setup-kubectl@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::776235864987:role/github-actions-ecommerce
+          aws-region: us-east-1
+
+      - name: Generate kubeconfig
+        run: aws eks update-kubeconfig --name ecommerce-eks --region us-east-1
+
+      - name: Delete ephemeral namespace
+        run: |
+          kubectl delete namespace pr-${{ github.event.number }} \
+            --ignore-not-found=true \
+            --wait=true \
+            --timeout=120s
+          echo "Namespace pr-${{ github.event.number }} deleted."

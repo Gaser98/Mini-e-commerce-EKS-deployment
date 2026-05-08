@@ -3,6 +3,9 @@
 terraform.tfstate
 terraform.tfstate.backup
 *.tfvars
+*.tfplan
+# lock files are managed by backend — never commit
+Infra/vc
 
 # IDE
 .vscode/

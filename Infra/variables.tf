@@ -22,8 +22,6 @@ variable "db_username" {
   default     = "demo"
 }
 
-variable "db_password" {
-  description = "PostgreSQL password"
-  type        = string
-  sensitive   = true
-}
+# db_password removed — credentials are now read from AWS Secrets Manager in data.tf.
+# Bootstrap: aws secretsmanager create-secret --name "ecommerce/<env>/rds" \
+#   --secret-string '{"username":"demo","password":"<pass>","connection_string":"postgres://..."}'

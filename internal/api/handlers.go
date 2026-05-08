@@ -15,7 +15,7 @@ import (
 	"db-design-project/internal/db"
 )
 
-func RegisterRoutes(r *gin.Engine, q *db.Queries) {
+func RegisterRoutes(r *gin.Engine, q db.Querier) {
 
 	// ---------- LOGIN ----------
 	r.POST("/login", func(c *gin.Context) {

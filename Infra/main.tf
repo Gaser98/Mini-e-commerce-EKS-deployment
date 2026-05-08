@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -192,22 +192,41 @@ resource "aws_security_group" "rds" {
 }
 
 resource "aws_db_instance" "postgres" {
-  identifier = "ecommerce-db"
-
+  identifier     = "ecommerce-db-${local.env}"
   engine         = "postgres"
-  instance_class = "db.t3.micro"
+  engine_version = "16.3"
+  instance_class = local.is_production ? "db.t3.small" : "db.t3.micro"
 
-  allocated_storage = 20
+  allocated_storage     = 20
+  max_allocated_storage = 100   # autoscale up to 100 GB — never runs out of disk
+  storage_type          = "gp3"
+  storage_encrypted     = true
 
   db_name  = var.db_name
-  username = var.db_username
-  password = var.db_password
+  username = jsondecode(data.aws_secretsmanager_secret_version.db_creds.secret_string)["username"]
+  password = jsondecode(data.aws_secretsmanager_secret_version.db_creds.secret_string)["password"]
 
   vpc_security_group_ids = [aws_security_group.rds.id]
   db_subnet_group_name   = aws_db_subnet_group.this.name
 
   publicly_accessible = false
-  skip_final_snapshot = true
+
+  # Failover: synchronous standby in a second AZ — only in production
+  multi_az = local.is_production
+
+  # Data safety: never skip final snapshot in production
+  deletion_protection       = local.is_production
+  skip_final_snapshot       = !local.is_production
+  final_snapshot_identifier = local.is_production ? "ecommerce-final-${local.env}" : null
+
+  backup_retention_period = local.is_production ? 7 : 1
+  backup_window           = "03:00-04:00"
+  maintenance_window      = "sun:04:00-sun:05:00"
+
+  performance_insights_enabled        = true
+  enabled_cloudwatch_logs_exports     = ["postgresql"]
+
+  tags = local.common_tags
 }
 
 ####################
