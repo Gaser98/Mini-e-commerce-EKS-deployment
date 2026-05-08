@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ecommerce-api-staging
+  namespace: argocd
+  # Cascade delete: removing this Application also removes the K8s resources it manages
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Gaser98/db-design-project.git
+    targetRevision: main
+    path: helm/ecommerce-api
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: staging
+
+  syncPolicy:
+    # ArgoCD syncs automatically whenever the git diff is detected
+    automated:
+      prune: true     # delete resources removed from the chart
+      selfHeal: true  # revert manual kubectl changes back to git state
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

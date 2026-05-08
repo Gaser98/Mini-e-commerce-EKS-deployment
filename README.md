@@ -491,11 +491,10 @@ Pull Request opened
 
 PR merged to main
   │
-  ├── Build + push (same SHA tagging)
-  ├── Deploy to staging namespace
-  ├── Smoke test (curl /health/ready)
-  ├── Manual approval gate (GitHub Environment protection rule)
-  └── Deploy to production namespace
+  ├── Build + push image (SHA tag → ECR)
+  └── CI commits new image.tag into values-staging.yaml
+        └── ArgoCD detects diff → auto-syncs staging namespace
+              Production: edit values-production.yaml → push → Sync in ArgoCD UI
 
 PR closed (merged or dismissed)
   └── kubectl delete namespace pr-{N}  ← ephemeral env destroyed
@@ -530,7 +529,7 @@ Every PR gets a fully isolated Kubernetes namespace (`pr-{number}`) on the exist
 
 - Created when the PR opens, destroyed when it closes
 - Never touches `staging` or `production` namespaces
-- Uses Kustomize overlay to inject the SHA-tagged image and staging secrets
+- Uses `helm upgrade --install` with `--set image.tag=<sha>` and `--set secrets.env=staging`
 - Load balancer URL posted as a PR comment for manual testing
 
 Namespaces are used instead of separate clusters because: one EKS cluster costs ~$72/month; a namespace is free, provides RBAC and NetworkPolicy isolation, and `kubectl delete namespace` tears down everything atomically.
@@ -574,7 +573,7 @@ ESO pod (IRSA) → Secrets Manager → creates K8s Secret → pod mounts it
 Rotation: update secret in AWS → ESO picks up in 1h → zero pod restarts needed
 ```
 
-Manifests: `k8s/base/external-secret.yaml`, `k8s/overlays/*/patch-secret-store.yaml`
+Manifests: `helm/ecommerce-api/templates/external-secret.yaml`
 
 ---
 
@@ -745,4 +744,78 @@ Integration ──┘
 ```
 
 All four gates must pass before the image is pushed or deployed.
+
+---
+
+## GitOps — ArgoCD
+
+ArgoCD runs inside the cluster and continuously reconciles the live K8s state against the Helm chart in git. This replaces the `helm upgrade --install` steps that used to run inside `cd.yml`.
+
+### Flow after a merge to main
+
+```
+git push → main
+  │
+  ├── CI builds image → pushes to ECR with SHA tag
+  └── CI commits new image.tag into values-staging.yaml
+        │
+        └── ArgoCD (staging app, automated sync)
+              detects git diff → runs helm upgrade
+              pods roll over → health checks pass
+              ✓ staging is live
+
+Promotion to production (manual):
+  1. Verify staging in ArgoCD UI
+  2. Edit values-production.yaml: image.tag → <sha>
+  3. git push
+  4. ArgoCD (production app) shows OutOfSync
+  5. Click Sync in UI → ArgoCD runs helm upgrade
+```
+
+### Why pull-based instead of push-based
+
+| Concern | Push (old cd.yml) | Pull (ArgoCD) |
+|---|---|---|
+| Drift detection | None — manual kubectl changes persist | Auto-heals: reverts any out-of-band change |
+| Rollback | Re-run pipeline with old SHA | Click History → Rollback in ArgoCD UI |
+| Audit trail | GitHub Actions logs | ArgoCD sync history + git commit history |
+| Production approval | GitHub Environment required reviewers | ArgoCD UI manual sync (production app has `automated: null`) |
+
+### Application manifests
+
+```
+argocd/
+  staging.yaml      ← auto-sync, selfHeal, prune
+  production.yaml   ← manual sync only
+  bootstrap.sh      ← one-time cluster installation
+```
+
+**Staging** (`argocd/staging.yaml`) — ArgoCD syncs automatically the moment CI commits the new image tag:
+```yaml
+syncPolicy:
+  automated:
+    prune: true     # removes K8s resources deleted from the chart
+    selfHeal: true  # reverts manual kubectl changes back to git
+```
+
+**Production** (`argocd/production.yaml`) — No automated sync. A human must click Sync after reviewing staging:
+```yaml
+syncPolicy:
+  automated: null   # sync is triggered manually in the ArgoCD UI
+```
+
+### One-time cluster bootstrap
+
+```bash
+# Run once after the EKS cluster is provisioned
+./argocd/bootstrap.sh
+
+# Access the UI
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+# Then open https://localhost:8080  (user: admin)
+```
+
+### Ephemeral PR environments
+
+PR namespaces (`pr-{N}`) are **not managed by ArgoCD** — they are dynamic and short-lived. CI still uses `helm upgrade --install` directly for ephemeral envs, and `cleanup.yml` deletes the namespace on PR close. ArgoCD only manages the two long-lived environments: staging and production.
 

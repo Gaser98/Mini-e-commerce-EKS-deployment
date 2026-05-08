@@ -1,3 +1,6 @@
+image:
+  tag: latest  # promoted manually via ArgoCD UI sync after staging passes
+
 replicaCount: 3
 
 secrets:

@@ -1,2 +1,7 @@
+image:
+  tag: latest  # updated by CI on every merge to main
+
+replicaCount: 1
+
 secrets:
   env: staging

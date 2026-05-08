@@ -1,4 +1,4 @@
-name: CD — Staging then Production
+name: CD — Build, push, and update image tag
 
 on:
   push:
@@ -8,14 +8,13 @@ env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 776235864987.dkr.ecr.us-east-1.amazonaws.com
   ECR_REPO: ecommerce-api
-  EKS_CLUSTER: ecommerce-eks
 
 permissions:
   id-token: write
-  contents: read
+  contents: write  # needed to commit the updated image tag back to the repo
 
 jobs:
-  # ── 1. Build and push (same pattern as CI) ────────────────────────────────
+  # ── 1. Build and push ────────────────────────────────────────────────────────
   build-push:
     name: Build and push
     runs-on: ubuntu-latest
@@ -44,89 +43,33 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 2. Deploy to staging ──────────────────────────────────────────────────
-  deploy-staging:
-    name: Deploy to staging
+  # ── 2. Update staging values file (ArgoCD auto-syncs from this) ──────────────
+  update-staging-tag:
+    name: Update staging image tag
     needs: build-push
     runs-on: ubuntu-latest
-    environment: staging
     steps:
       - uses: actions/checkout@v4
-
-      - uses: azure/setup-kubectl@v4
-      - uses: azure/setup-helm@v4
         with:
-          version: latest
+          # Use a token with contents:write — GITHUB_TOKEN works if Actions has write access
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::776235864987:role/github-actions-ecommerce
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Generate kubeconfig
-        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
-
-      - name: Deploy to staging
+      - name: Patch values-staging.yaml with new image tag
         run: |
-          helm upgrade --install ecommerce-api ./helm/ecommerce-api \
-            --namespace staging \
-            --create-namespace \
-            --values helm/ecommerce-api/values-staging.yaml \
-            --set image.tag=${{ github.sha }} \
-            --wait \
-            --atomic \
-            --timeout 180s
+          sed -i "s|^  tag:.*|  tag: ${{ github.sha }}|" helm/ecommerce-api/values-staging.yaml
 
-      - name: Run smoke tests against staging
+      - name: Commit and push
         run: |
-          STAGING_HOST=$(kubectl get svc ecommerce-api-ecommerce-api -n staging \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-          for i in $(seq 1 12); do
-            curl -sf "http://${STAGING_HOST}/health/live" && break
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-          curl -sf "http://${STAGING_HOST}/health/ready"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/ecommerce-api/values-staging.yaml
+          git diff --cached --quiet && echo "No tag change, skipping commit" && exit 0
+          git commit -m "chore: update staging image tag to ${{ github.sha }}"
+          git push
 
-  # ── 3. Deploy to production (requires manual approval in GitHub UI) ────────
-  deploy-production:
-    name: Deploy to production
-    needs: deploy-staging
-    runs-on: ubuntu-latest
-    # In GitHub: Settings > Environments > production > Required reviewers
-    # The workflow pauses here until a reviewer approves in the GitHub UI.
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: azure/setup-kubectl@v4
-      - uses: azure/setup-helm@v4
-        with:
-          version: latest
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::776235864987:role/github-actions-ecommerce
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Generate kubeconfig
-        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
-
-      - name: Deploy to production
-        run: |
-          helm upgrade --install ecommerce-api ./helm/ecommerce-api \
-            --namespace production \
-            --create-namespace \
-            --values helm/ecommerce-api/values-production.yaml \
-            --set image.tag=${{ github.sha }} \
-            --wait \
-            --atomic \
-            --timeout 300s
-
-      - name: Verify production health
-        run: |
-          PROD_HOST=$(kubectl get svc ecommerce-api-ecommerce-api -n production \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-          curl -sf "http://${PROD_HOST}/health/ready"
+  # ── Note on production ───────────────────────────────────────────────────────
+  # Production is promoted manually:
+  #   1. Verify staging looks healthy in ArgoCD UI or via kubectl.
+  #   2. Update helm/ecommerce-api/values-production.yaml image.tag to the desired SHA.
+  #   3. Push the change — ArgoCD (production app, manual sync) shows an OutOfSync diff.
+  #   4. Click Sync in ArgoCD UI to deploy. ArgoCD rolls back automatically on failure.
