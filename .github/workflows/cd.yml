@@ -53,9 +53,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-        shell: bash
       - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: latest
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -66,24 +67,21 @@ jobs:
       - name: Generate kubeconfig
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
 
-      - name: Ensure staging namespace
-        run: kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Deploy to staging
         run: |
-          cd k8s/overlays/staging
-          kustomize edit set image \
-            776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api=${{ needs.build-push.outputs.image-uri }}
-          kustomize build . | kubectl apply -n staging -f -
-
-      - name: Wait for staging rollout
-        run: kubectl rollout status deployment/ecommerce-api -n staging --timeout=180s
+          helm upgrade --install ecommerce-api ./helm/ecommerce-api \
+            --namespace staging \
+            --create-namespace \
+            --values helm/ecommerce-api/values-staging.yaml \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --atomic \
+            --timeout 180s
 
       - name: Run smoke tests against staging
         run: |
-          STAGING_HOST=$(kubectl get svc ecommerce-api -n staging \
+          STAGING_HOST=$(kubectl get svc ecommerce-api-ecommerce-api -n staging \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-          # Wait for LB to propagate
           for i in $(seq 1 12); do
             curl -sf "http://${STAGING_HOST}/health/live" && break
             echo "Attempt $i failed, retrying in 10s..."
@@ -102,9 +100,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-        shell: bash
       - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: latest
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -115,21 +114,19 @@ jobs:
       - name: Generate kubeconfig
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
 
-      - name: Ensure production namespace
-        run: kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Deploy to production
         run: |
-          cd k8s/overlays/production
-          kustomize edit set image \
-            776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api=${{ needs.build-push.outputs.image-uri }}
-          kustomize build . | kubectl apply -n production -f -
-
-      - name: Wait for production rollout
-        run: kubectl rollout status deployment/ecommerce-api -n production --timeout=300s
+          helm upgrade --install ecommerce-api ./helm/ecommerce-api \
+            --namespace production \
+            --create-namespace \
+            --values helm/ecommerce-api/values-production.yaml \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --atomic \
+            --timeout 300s
 
       - name: Verify production health
         run: |
-          PROD_HOST=$(kubectl get svc ecommerce-api -n production \
+          PROD_HOST=$(kubectl get svc ecommerce-api-ecommerce-api -n production \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           curl -sf "http://${PROD_HOST}/health/ready"

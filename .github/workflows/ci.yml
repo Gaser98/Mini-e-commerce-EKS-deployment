@@ -127,10 +127,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install kubectl + kustomize
+      - name: Install kubectl and Helm
         uses: azure/setup-kubectl@v4
-      - run: curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-        shell: bash
+      - uses: azure/setup-helm@v4
+        with:
+          version: latest
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -139,46 +140,33 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Generate kubeconfig from EKS
-        # aws eks update-kubeconfig writes ~/.kube/config with an exec plugin.
-        # Each kubectl call then calls "aws eks get-token" to get a short-lived token.
-        # No long-lived kubeconfig is stored anywhere.
         run: |
           aws eks update-kubeconfig \
             --name ${{ env.EKS_CLUSTER }} \
             --region ${{ env.AWS_REGION }}
 
-      - name: Create isolated namespace
-        run: |
-          kubectl create namespace ${{ env.PR_NAMESPACE }} --dry-run=client -o yaml \
-            | kubectl apply -f -
-          kubectl label namespace ${{ env.PR_NAMESPACE }} \
-            ephemeral=true \
-            pr="${{ github.event.number }}" \
-            --overwrite
+      - name: Helm lint
+        run: helm lint ./helm/ecommerce-api
 
-      - name: Render and validate manifests
+      - name: Deploy (helm upgrade --install)
+        # --install     creates the release if it doesn't exist yet
+        # --wait        blocks until all pods are Ready (replaces kubectl rollout status)
+        # --atomic      rolls back automatically if the release fails
+        # --set         injects the exact git SHA — never deploys :latest
         run: |
-          cd k8s/overlays/ephemeral
-          kustomize edit set image \
-            776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api=${{ needs.build-push.outputs.image-uri }}
-          kustomize build . | kubectl apply --dry-run=server -n ${{ env.PR_NAMESPACE }} -f -
-
-      - name: Deploy
-        run: |
-          cd k8s/overlays/ephemeral
-          kustomize edit set image \
-            776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api=${{ needs.build-push.outputs.image-uri }}
-          kustomize build . | kubectl apply -n ${{ env.PR_NAMESPACE }} -f -
-
-      - name: Wait for rollout
-        run: |
-          kubectl rollout status deployment/ecommerce-api \
-            -n ${{ env.PR_NAMESPACE }} \
-            --timeout=120s
+          helm upgrade --install ecommerce-api ./helm/ecommerce-api \
+            --namespace ${{ env.PR_NAMESPACE }} \
+            --create-namespace \
+            --set image.tag=${{ github.sha }} \
+            --set secrets.env=staging \
+            --wait \
+            --atomic \
+            --timeout 120s
 
       - name: Post preview URL to PR
         run: |
-          LB=$(kubectl get svc ecommerce-api -n ${{ env.PR_NAMESPACE }} \
+          LB=$(kubectl get svc ecommerce-api-ecommerce-api \
+            -n ${{ env.PR_NAMESPACE }} \
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
           gh pr comment ${{ github.event.number }} --body \
             "**Ephemeral preview** \`${{ env.PR_NAMESPACE }}\` deployed.

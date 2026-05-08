@@ -1,0 +1,43 @@
+# Default values — used for ephemeral PR environments.
+# Override per environment with values-staging.yaml or values-production.yaml.
+
+image:
+  repository: 776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api
+  tag: latest        # always overridden by CI: --set image.tag=<git-sha>
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::776235864987:role/api-irsa-role
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+# Which Secrets Manager path to read secrets from.
+# Resolves to: ecommerce/<secrets.env>/rds and ecommerce/<secrets.env>/jwt
+secrets:
+  env: staging
+
+probes:
+  readiness:
+    path: /health/ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  liveness:
+    path: /health/live
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    failureThreshold: 5

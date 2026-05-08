@@ -1,7 +1,0 @@
-# Ephemeral envs use 1 replica to minimise cost
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ecommerce-api
-spec:
-  replicas: 1

@@ -578,30 +578,43 @@ Manifests: `k8s/base/external-secret.yaml`, `k8s/overlays/*/patch-secret-store.y
 
 ---
 
-## Kustomize — Multi-Environment K8s Manifests
+## Helm — Multi-Environment K8s Manifests
 
 ```
-k8s/
-  base/                        ← single source of truth, no namespace hardcoded
+helm/ecommerce-api/
+  Chart.yaml
+  values.yaml              ← defaults (ephemeral PR envs)
+  values-staging.yaml      ← staging overrides
+  values-production.yaml   ← production overrides (3 replicas)
+  templates/
+    _helpers.tpl           ← name/label helpers
     deployment.yaml
     service.yaml
-    serviceaccount.yaml        ← IRSA annotation for Secrets Manager access
-    external-secret.yaml       ← ESO ExternalSecret + SecretStore
-    kustomization.yaml
-  overlays/
-    production/                ← 3 replicas, production secrets path
-    staging/                   ← default replicas, staging secrets path
-    ephemeral/                 ← 1 replica, staging secrets, namespace set by CI
+    serviceaccount.yaml    ← IRSA annotation for Secrets Manager access
+    external-secret.yaml   ← ESO SecretStore + ExternalSecret
 ```
 
-CI applies overlays with:
+CI deploys with a single command per environment:
+
 ```bash
-kustomize edit set image \
-  776235864987.dkr.ecr.us-east-1.amazonaws.com/ecommerce-api=<ECR_URL>:<SHA>
-kustomize build k8s/overlays/production | kubectl apply -n production -f -
+# Ephemeral PR environment
+helm upgrade --install ecommerce-api ./helm/ecommerce-api \
+  --namespace pr-42 --create-namespace \
+  --set image.tag=<git-sha> \
+  --set secrets.env=staging \
+  --wait --atomic --timeout 120s
+
+# Production
+helm upgrade --install ecommerce-api ./helm/ecommerce-api \
+  --namespace production --create-namespace \
+  --values helm/ecommerce-api/values-production.yaml \
+  --set image.tag=<git-sha> \
+  --wait --atomic --timeout 300s
 ```
 
-The base manifests are never modified directly — overlays patch what differs per environment.
+`--atomic` rolls back the release automatically if any pod fails to become Ready within the timeout — no manual intervention needed on a bad deploy. `--wait` blocks the CI job until rollout is confirmed, replacing a separate `kubectl rollout status` step.
+
+The `secrets.env` value controls which Secrets Manager path ESO reads from (`ecommerce/<env>/rds`, `ecommerce/<env>/jwt`), so the same chart serves all environments without duplication.
 
 ---
 
