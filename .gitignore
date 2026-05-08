@@ -15,6 +15,9 @@ Infra/vc
 .DS_Store
 *.Zone.Identifier
 
+# Load testing — keep local, never push
+k6/
+
 # Temp
 *.repo-update
 frontfail.jpeg

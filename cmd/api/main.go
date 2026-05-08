@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"db-design-project/internal/api"
 	"db-design-project/internal/db"
@@ -20,6 +21,9 @@ func main() {
 
 	queries := db.New(dbConn)
 	router := gin.Default()
+	router.Use(api.PrometheusMiddleware())
+
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// CORS middleware
 	router.Use(func(c *gin.Context) {
