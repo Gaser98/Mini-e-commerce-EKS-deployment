@@ -819,3 +819,45 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 PR namespaces (`pr-{N}`) are **not managed by ArgoCD** — they are dynamic and short-lived. CI still uses `helm upgrade --install` directly for ephemeral envs, and `cleanup.yml` deletes the namespace on PR close. ArgoCD only manages the two long-lived environments: staging and production.
 
+---
+
+## Local Observability — Prometheus + Grafana
+
+A local stack for watching live API metrics while driving load through the endpoints.
+
+### Instrumentation
+
+`internal/api/metrics.go` adds a Gin middleware that records two metrics on every request:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | Counter | `method`, `path`, `status` |
+| `http_request_duration_seconds` | Histogram | `method`, `path` |
+
+Raw data is exposed at `GET /metrics` and scraped by Prometheus every 10 seconds.
+
+### Stack
+
+```
+docker-compose.observability.yml
+observability/
+  prometheus.yml                          ← scrape config
+  grafana/
+    provisioning/datasources/             ← Prometheus auto-wired as default
+    provisioning/dashboards/              ← dashboard provider config
+    dashboards/api.json                   ← pre-built dashboard, no import needed
+```
+
+### Run locally
+
+```bash
+# Start API + Postgres + Prometheus + Grafana
+docker compose -f docker-compose.observability.yml up --build
+
+# Grafana dashboard — http://localhost:3000  (no login required)
+# Prometheus UI    — http://localhost:9090
+# API              — http://localhost:8080
+```
+
+The Grafana dashboard auto-provisions four panels: request rate by endpoint, 5xx error rate, latency p50/p95/p99, and status code breakdown. See `docs/local-guide.md` for seeding test data, running k6 load tests, and a full manual smoke test walkthrough.
+
